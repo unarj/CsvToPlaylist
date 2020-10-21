@@ -3,21 +3,23 @@ Param(
 	[string]$User,
 	[string]$Pass,
 	[string]$Playlist,
-	[string]$Source
+	[string]$Source,
+	[string]$Output
 )
 
 if(!$Server -or !$User -or !$Pass -or !$Playlist -or !$Source){
-	"  >> -Server <http://navidrome:4533> -User <username> -Pass <password> -Playlist <playlist name> -Source <csv file with artist,album,title>"
+	"  >> -Server <http://navidrome:4533> -User <username> -Pass <password> -Playlist <playlist> -Source <csv> [-Output <csv>]"
 	exit 1
 }
 
-$src = Import-Csv $Source
+$src = Import-Csv $Source |?{$_.artist -and $_.album -and $_.title}
 if(!$src){
-	" >> error reading CSV at '$Source'."
+	"  >> error reading csv at '$Source'."
 	exit 1
 }
 
 $opts = "u=$User&p=$Pass&v=1.12&c=CsvToPlaylist"
+$out = @()
 
 $playlistId = $false
 $r = Invoke-RestMethod "$Server/rest/ping?$opts"
@@ -44,17 +46,18 @@ if(($r.ChildNodes.xmlns -eq 'http://subsonic.org/restapi') -and ($r.ChildNodes.s
 						if($found.Count -gt 1){ $found = $found |?{$_.title -like $x.title} }
 						if($found.id -and (!$found.Count -or ($found.Count -eq 1))){
 							$songFound = $true
+							$out += [PSCustomObject]@{id=$found.id;artist=$found.artist;album=$found.album;title=$found.title;artistIn=$x.artist;albumIn=$x.album;titleIn=$x.title}
 							if(!$playlistItems.id.Contains($found.id)){
 								Write-Host ("query '{0}' found track '{1}'({2}), adding to playlist '{3}'... " -f $q,$found.title,$found.id,$Playlist) -NoNewLine
 								(Invoke-RestMethod ("$Server/rest/updatePlaylist?$opts&playlistId=$playlistId&=songIdToAdd"+$found.id)).ChildNodes.status
-							}else{
-								$playlistItems = $playlistItems |?{$_.id -ne $found.id}
 							}
+							$playlistItems = $playlistItems |?{$_.id -ne $found.id}
 						}
 					}
 				}
 			}
 			if(!$songFound){
+				$out += [PSCustomObject]@{artistIn=$x.artist;albumIn=$x.album;titleIn=$x.title}
 				if($found.Count -gt 1){
 					"  >> too many hits for '{0}' '{1}' '{2}'." -f $x.artist,$x.album,$x.title
 				}else{
@@ -65,6 +68,7 @@ if(($r.ChildNodes.xmlns -eq 'http://subsonic.org/restapi') -and ($r.ChildNodes.s
 		if($playlistItems){
 			"`n  >> items in playlist not accounted for..."
 			$playlistItems |Select artist,album,title
+			""
 		}
 		do{
 			$playlistItems = (Invoke-RestMethod "$Server/rest/getPlaylist?$opts&id=$playlistId").ChildNodes.playlist.entry
@@ -74,11 +78,12 @@ if(($r.ChildNodes.xmlns -eq 'http://subsonic.org/restapi') -and ($r.ChildNodes.s
 			foreach($x in $dup.keys |?{$dup["$_"] -gt 1}){
 				$dupFound = $true
 				$i = [array]::lastindexof($playlistItems.id,$x)
-				Write-Host (" >> removing duplicate track '{0}' '{1}' from '{2}'... " -f $playlistItems[$i].artist,$playlistItems[$i].title,$Playlist) -NoNewLine
+				Write-Host ("  >> removing duplicate track '{0}' '{1}' from '{2}'... " -f $playlistItems[$i].artist,$playlistItems[$i].title,$Playlist) -NoNewLine
 				(Invoke-RestMethod ("$Server/rest/updatePlaylist?$opts&playlistId=$playlistId&songIndexToRemove="+($i+1))).ChildNodes.status
 				$playlistItems.RemoveAt($i)
 			}
 		}while($dupFound)
+		if($Output){ $out |Export-Csv $Output -NoTypeInformation }
 		"  >> '{0}' now has {1} items in it, ciao." -f $playlist,((Invoke-RestMethod "$Server/rest/getPlaylist?$opts&id=$playlistId").ChildNodes.playlist.entry).Count
 	}else{
 		"  >> error locating playlist '$Playlist'."
