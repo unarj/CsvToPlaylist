@@ -18,6 +18,7 @@ if(!$src){
 	exit 1
 }
 
+Add-Type -AssemblyName System.Web
 $opts = "u=$User&p=$Pass&v=1.12&c=CsvToPlaylist"
 $out = @()
 
